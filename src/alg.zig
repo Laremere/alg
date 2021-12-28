@@ -33,6 +33,11 @@ const expectEqual = @import("std").testing.expectEqual;
 test "math" {
     std.debug.print("\n{}\n", .{math("a", .{ .a = @as(i8, 7) })});
     try expectEqual(@as(i8, 5), math("a", .{ .a = @as(i8, 5) }));
+    try expectEqual(@as(i8, 10), math("a + a", .{ .a = @as(i8, 5) }));
+    std.debug.print("\n{}\n", .{math("a + b", .{
+        .a = @as(i8, 7),
+        .b = @as(i8, 2),
+    })});
 }
 
 // Using an allocator (even just a fixed buffer) doesn't work during comptime yet.
@@ -62,7 +67,7 @@ pub fn math(comptime eq: [:0]const u8, args: anytype) ReturnType(eq, @TypeOf(arg
     return rootAst.eval(args);
 }
 
-pub fn ReturnType(comptime eq: [:0]const u8, argsType: type) type {
+fn ReturnType(comptime eq: [:0]const u8, argsType: type) type {
     comptime var alloc = StupidAlloc{
         .asts = undefined,
         .index = 0,
@@ -72,20 +77,66 @@ pub fn ReturnType(comptime eq: [:0]const u8, argsType: type) type {
     return rootAst.ReturnType();
 }
 
-pub fn parse(comptime alloc: *StupidAlloc, comptime eq: [:0]const u8, argsType: type) *Ast {
+const BlockTerm = enum {
+    eof,
+    // closeParen,
+
+    fn name(self: BlockTerm) [:0]const u8 {
+        switch (self) {
+            .eof => "end of equation",
+            .closeParen => "close parentheses",
+        }
+    }
+};
+
+fn parse(comptime alloc: *StupidAlloc, comptime eq: [:0]const u8, argsType: type) *Ast {
     var tokenizer = std.zig.Tokenizer.init(eq);
+    return parseRec(alloc, eq, argsType, &tokenizer, BlockTerm.eof);
+}
+
+fn parseRec(comptime alloc: *StupidAlloc, comptime eq: [:0]const u8, argsType: type, tokenizer: *std.zig.Tokenizer, blockTerm: BlockTerm) *Ast {
+    var maybeLhs: ?*Ast = null;
+    var maybeBinaryOp: ?BinaryOp.Op = null;
     while (true) {
         comptime var token = comptime tokenizer.next();
         switch (token.tag) {
             .eof => {
-                @compileError("eof");
+                if (blockTerm == BlockTerm.eof) {
+                    if (maybeLhs) |lhs| {
+                        return lhs;
+                    }
+                    @compileError("Block has no value");
+                    // if (maybeBinaryOp) |binaryOp| {
+
+                    // }
+                }
+                @compileError("Equation ended early, expected " ++ BlockTerm.name());
             },
             .plus => {
-                @compileError("plus");
+                if (maybeLhs) |_| {
+                    if (maybeBinaryOp) |binaryOp| {
+                        if (binaryOp != BinaryOp.Op.addErr) {
+                            @compileError("math does not support different operators within the same scope.");
+                        }
+                    } else {
+                        maybeBinaryOp = BinaryOp.Op.addErr;
+                    }
+                } else {
+                    @compileError("Found +, expected a value before a binary operation.");
+                }
             },
             .identifier => {
                 const name = eq[token.loc.start..token.loc.end];
-                return Identifier.init(alloc, name, argsType);
+                var rhs = Identifier.init(alloc, name, argsType);
+                if (maybeLhs) |lhs| {
+                    if (maybeBinaryOp) |binaryOp| {
+                        maybeLhs = BinaryOp.init(alloc, lhs, binaryOp, rhs);
+                    } else {
+                        @compileError("Two values with no operation between them.");
+                    }
+                } else {
+                    maybeLhs = rhs;
+                }
             },
             else => {
                 @compileError("Invalid token for math equation.");
@@ -96,18 +147,20 @@ pub fn parse(comptime alloc: *StupidAlloc, comptime eq: [:0]const u8, argsType: 
 
 const Ast = union(enum) {
     identifier: Identifier,
-    // binaryOp: *BinaryOp,
+    binaryOp: BinaryOp,
     // unary op.
 
     fn eval(comptime ast: *Ast, args: anytype) ast.ReturnType() {
         return switch (ast.*) {
             .identifier => |v| v.eval(args),
+            .binaryOp => |v| v.eval(args),
         };
     }
 
     fn ReturnType(comptime ast: *Ast) type {
         return switch (ast.*) {
-            .identifier => |v| v.ReturnType(),
+            .identifier => |v| v.return_type,
+            .binaryOp => |v| v.return_type,
         };
     }
 };
@@ -137,25 +190,50 @@ const Identifier = struct {
         }
     }
 
-    fn eval(comptime ident: *const Identifier, args: anytype) ident.ReturnType() {
+    fn eval(comptime ident: *const Identifier, args: anytype) ident.return_type {
         return @field(args, ident.name);
-    }
-
-    fn ReturnType(comptime ident: *const Identifier) type {
-        return ident.return_type;
     }
 };
 
-// const BinaryOp = struct {
-//     lhs: Ast,
-//     rhs: Ast,
-//     op: Op,
+const BinaryOp = struct {
+    lhs: *Ast,
+    op: Op,
+    rhs: *Ast,
+    return_type: type,
 
-//     const Op = enum {
-//         addErr,
-//         mulErr,
-//     };
-// };
+    const Op = enum {
+        addErr,
+        // mulErr,
+    };
+
+    fn init(comptime alloc: *StupidAlloc, lhs: *Ast, op: Op, rhs: *Ast) *Ast {
+        var lhsRet = lhs.ReturnType();
+        var rhsRet = rhs.ReturnType();
+        if (lhsRet != rhsRet) {
+            @compileError("Values on either side of binary op do not match type.");
+        }
+        var r = alloc.next();
+        r.* = Ast{
+            .binaryOp = BinaryOp{
+                .lhs = lhs,
+                .op = op,
+                .rhs = rhs,
+                .return_type = lhsRet,
+            },
+        };
+        return r;
+    }
+
+    fn eval(comptime self: *const BinaryOp, args: anytype) self.return_type {
+        return switch (self.op) {
+            .addErr => if (comptime isBuiltinScalar(self.return_type)) {
+                return self.lhs.eval(args) + self.rhs.eval(args);
+            } else {
+                @compileError("No custom adding yet");
+            },
+        };
+    }
+};
 
 // fn parseInt(comptime str: []const u8) comptime_int {
 //     var r: comptime_int = 0;
@@ -184,15 +262,15 @@ const Identifier = struct {
 //     try expectEqual(9876543210, parseInt("9876543210"));
 // }
 
-// fn isBuiltinScalar(comptime v: type) bool {
-//     return switch (@typeInfo(v)) {
-//         .Int => true,
-//         .Float => true,
-//         .ComptimeFloat => true,
-//         .ComptimeInt => true,
-//         else => false,
-//     };
-// }
+fn isBuiltinScalar(comptime v: type) bool {
+    return switch (@typeInfo(v)) {
+        .Int => true,
+        .Float => true,
+        .ComptimeFloat => true,
+        .ComptimeInt => true,
+        else => false,
+    };
+}
 
 // fn InvalidCombo(comptime a: type, comptime b: type, comptime op: []const u8) noreturn {
 //     @compileError("Invalid combination of " ++ @typeName(a) ++ " and " ++ @typeName(b) ++ " for operation " ++ op ++ ".");
