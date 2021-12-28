@@ -22,6 +22,8 @@ const expectEqual = @import("std").testing.expectEqual;
 // e?
 // pi?
 // Identity matrix?  Is this useful?
+//
+// Make parse errors actually useful.
 
 // pub fn Matrix(comptime T: type, comptime rows: comptime_int, columns: comptime_int) type {
 //     return struct {
@@ -32,12 +34,12 @@ const expectEqual = @import("std").testing.expectEqual;
 
 test "math" {
     std.debug.print("\n{}\n", .{math("a", .{ .a = @as(i8, 7) })});
-    try expectEqual(@as(i8, 5), math("a", .{ .a = @as(i8, 5) }));
-    try expectEqual(@as(i8, 10), math("a + a", .{ .a = @as(i8, 5) }));
-    std.debug.print("\n{}\n", .{math("a + b", .{
-        .a = @as(i8, 7),
-        .b = @as(i8, 2),
-    })});
+    // try expectEqual(@as(i8, 5), math("a", .{ .a = @as(i8, 5) }));
+    // try expectEqual(@as(i8, 15), math("a + a + a +", .{ .a = @as(i8, 5) }));
+    // std.debug.print("\n{}\n", .{math("a + b", .{
+    //     .a = @as(i8, 7),
+    //     .b = @as(i8, 2),
+    // })});
 }
 
 // Using an allocator (even just a fixed buffer) doesn't work during comptime yet.
@@ -90,16 +92,17 @@ const BlockTerm = enum {
 };
 
 fn parse(comptime alloc: *StupidAlloc, comptime eq: [:0]const u8, argsType: type) *Ast {
-    var tokenizer = std.zig.Tokenizer.init(eq);
+    comptime var tokenizer = Tokenizer.init(eq);
     return parseRec(alloc, eq, argsType, &tokenizer, BlockTerm.eof);
 }
 
-fn parseRec(comptime alloc: *StupidAlloc, comptime eq: [:0]const u8, argsType: type, tokenizer: *std.zig.Tokenizer, blockTerm: BlockTerm) *Ast {
+fn parseRec(comptime alloc: *StupidAlloc, comptime eq: [:0]const u8, argsType: type, comptime tokenizer: *Tokenizer, blockTerm: BlockTerm) *Ast {
     var maybeLhs: ?*Ast = null;
     var maybeBinaryOp: ?BinaryOp.Op = null;
     while (true) {
         comptime var token = comptime tokenizer.next();
         switch (token.tag) {
+            .invalid => @compileError("Invalid equation"),
             .eof => {
                 if (blockTerm == BlockTerm.eof) {
                     if (maybeLhs) |lhs| {
@@ -126,7 +129,7 @@ fn parseRec(comptime alloc: *StupidAlloc, comptime eq: [:0]const u8, argsType: t
                 }
             },
             .identifier => {
-                const name = eq[token.loc.start..token.loc.end];
+                const name = eq[token.start..token.end];
                 var rhs = Identifier.init(alloc, name, argsType);
                 if (maybeLhs) |lhs| {
                     if (maybeBinaryOp) |binaryOp| {
@@ -137,9 +140,6 @@ fn parseRec(comptime alloc: *StupidAlloc, comptime eq: [:0]const u8, argsType: t
                 } else {
                     maybeLhs = rhs;
                 }
-            },
-            else => {
-                @compileError("Invalid token for math equation.");
             },
         }
     }
@@ -288,3 +288,79 @@ fn isBuiltinScalar(comptime v: type) bool {
 //         @compileLog(field.name);
 //     }
 // }
+
+const Token = struct {
+    tag: Tag,
+    start: usize,
+    end: usize,
+
+    const Tag = enum {
+        invalid,
+        eof,
+        identifier,
+        plus,
+    };
+};
+
+const Tokenizer = struct {
+    buffer: [:0]const u8,
+    index: usize,
+
+    fn init(buffer: [:0]const u8) Tokenizer {
+        return Tokenizer{
+            .buffer = buffer,
+            .index = 0,
+        };
+    }
+
+    const State = enum {
+        start,
+        identifier,
+        // plus,
+    };
+
+    fn next(self: *Tokenizer) Token {
+        var state = State.start;
+        var r = Token{
+            .tag = .eof,
+            .start = self.index,
+            .end = undefined,
+        };
+
+        outer: while (true) : (self.index += 1) {
+            const c = if (self.index < self.buffer.len) self.buffer[self.index] else 0;
+            // @compileLog(@tagName(state), self.index, c);
+            switch (state) {
+                .start => switch (c) {
+                    0 => {
+                        break :outer;
+                    },
+                    ' ' => {
+                        r.start = self.index + 1;
+                    },
+                    'a'...'z', 'A'...'A', '_' => {
+                        state = .identifier;
+                    },
+                    '+' => {
+                        r.tag = .plus;
+                        break :outer;
+                    },
+                    else => {
+                        r.tag = .invalid;
+                        break :outer;
+                    },
+                },
+                .identifier => switch (c) {
+                    'a'...'z', 'A'...'A', '_' => {},
+                    else => {
+                        r.tag = .identifier;
+                        break :outer;
+                    },
+                },
+            }
+        }
+        // @compileLog("Tag out", @tagName(r.tag));
+        r.end = self.index;
+        return r;
+    }
+};
