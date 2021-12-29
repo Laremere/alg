@@ -34,12 +34,12 @@ const expectEqual = @import("std").testing.expectEqual;
 
 test "math" {
     std.debug.print("\n{}\n", .{math("a", .{ .a = @as(i8, 7) })});
-    // try expectEqual(@as(i8, 5), math("a", .{ .a = @as(i8, 5) }));
-    // try expectEqual(@as(i8, 15), math("a + a + a +", .{ .a = @as(i8, 5) }));
-    // std.debug.print("\n{}\n", .{math("a + b", .{
-    //     .a = @as(i8, 7),
-    //     .b = @as(i8, 2),
-    // })});
+    try expectEqual(@as(i8, 5), math("a", .{ .a = @as(i8, 5) }));
+    try expectEqual(@as(i8, 15), math("a + a + a +", .{ .a = @as(i8, 5) }));
+    std.debug.print("\n{}\n", .{math("a + b", .{
+        .a = @as(i8, 7),
+        .b = @as(i8, 2),
+    })});
 }
 
 // Using an allocator (even just a fixed buffer) doesn't work during comptime yet.
@@ -343,6 +343,7 @@ const Tokenizer = struct {
                     },
                     '+' => {
                         r.tag = .plus;
+                        self.index += 1;
                         break :outer;
                     },
                     else => {
