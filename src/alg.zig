@@ -134,7 +134,7 @@ const Parser = struct {
             },
             .value => |lhs| lhs,
             .blockTerm => {
-                @panic("Empty block");
+                @compileError("Empty block");
             },
         };
         var firstOp: ?Token.Tag = null;
@@ -142,7 +142,7 @@ const Parser = struct {
             var op = switch (self.parseElement()) {
                 .operand => |op| op,
                 .value => {
-                    @panic("Multiple values in a row");
+                    @compileError("Multiple values in a row");
                 },
                 .blockTerm => |blockTerm| {
                     if (expectedBlockTerm == blockTerm) {
@@ -153,13 +153,15 @@ const Parser = struct {
             };
             if (firstOp) |correctOp| {
                 if (op != correctOp) {
-                    @panic("Mismatching operations");
+                    @compileError("Mismatching operations");
                 }
+            } else {
+                firstOp = op;
             }
             var rhs = switch (self.parseElement()) {
-                .operand => @panic("Unexpected double operand"),
+                .operand => @compileError("Unexpected double operand"),
                 .value => |rhs| rhs,
-                .blockTerm => @panic("Unexpected block termination"),
+                .blockTerm => @compileError("Unexpected block termination"),
             };
             lhs = BinaryOp.init(&self.alloc, lhs, op, rhs);
         }
