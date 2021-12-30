@@ -161,11 +161,7 @@ const Parser = struct {
                 .value => |rhs| rhs,
                 .blockTerm => @panic("Unexpected block termination"),
             };
-            lhs = switch (op) {
-                .plus => BinaryOp.init(&self.alloc, lhs, BinaryOp.Op.addErr, rhs),
-                .minus => BinaryOp.init(&self.alloc, lhs, BinaryOp.Op.subErr, rhs),
-                else => @panic("Bad binary operation"),
-            };
+            lhs = BinaryOp.init(&self.alloc, lhs, op, rhs);
         }
     }
 
@@ -256,7 +252,13 @@ const BinaryOp = struct {
         // mulErr,
     };
 
-    fn init(comptime alloc: *StupidAlloc, lhs: *Ast, op: Op, rhs: *Ast) *Ast {
+    fn init(comptime alloc: *StupidAlloc, lhs: *Ast, opToken: Token.Tag, rhs: *Ast) *Ast {
+        var op = switch (opToken) {
+            .plus => Op.addErr,
+            .minus => Op.subErr,
+            else => @compileError("Invalid binary operator"),
+        };
+
         var lhsRet = lhs.ReturnType();
         var rhsRet = rhs.ReturnType();
         if (lhsRet != rhsRet) {
