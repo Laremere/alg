@@ -42,7 +42,7 @@ test "math" {
     })});
     try expectEqual(15, math("a - b", .{ .a = 20, .b = 5 }));
     std.debug.print("\n{}\n", .{math("a - b", .{ .a = 1000000, .b = 5 })});
-    std.debug.print("\n{}\n", .{math("-a", .{ .a = 1000000 })});
+    std.debug.print("\n{}\n", .{math("(-a) + a + (a+a+a)", .{ .a = 10 })});
 }
 
 // Using an allocator (even just a fixed buffer) doesn't work during comptime yet.
@@ -76,14 +76,14 @@ fn ReturnType(comptime eq: [:0]const u8, argsType: type) type {
 
 const BlockTerm = enum {
     eof,
-    // closeParen,
+    rParen,
 
-    fn name(self: BlockTerm) [:0]const u8 {
-        switch (self) {
-            .eof => "end of equation",
-            .closeParen => "close parentheses",
-        }
-    }
+    // fn name(self: BlockTerm) [:0]const u8 {
+    //     switch (self) {
+    //         .eof => "end of equation",
+    //         .closeParen => "close parentheses",
+    //     }
+    // }
 };
 
 const Parser = struct {
@@ -177,12 +177,21 @@ const Parser = struct {
         var token = self.tokenizer.next();
         switch (token.tag) {
             .invalid => @compileError("Invalid equation"),
+
             .eof => {
                 return Element{ .blockTerm = BlockTerm.eof };
             },
+            .lParen => {
+                return Element{ .value = self.parseStatement(BlockTerm.rParen) };
+            },
+            .rParen => {
+                return Element{ .blockTerm = BlockTerm.rParen };
+            },
+
             .plus, .minus => {
                 return Element{ .operand = token.tag };
             },
+
             .identifier => {
                 return Element{ .value = Identifier.init(&self.alloc, self.tokenizer.source(token), self.argsType) };
             },
@@ -391,6 +400,8 @@ const Token = struct {
         identifier,
         plus,
         minus,
+        lParen,
+        rParen,
     };
 };
 
@@ -440,6 +451,16 @@ const Tokenizer = struct {
                     },
                     '-' => {
                         r.tag = .minus;
+                        self.index += 1;
+                        break :outer;
+                    },
+                    '(' => {
+                        r.tag = .lParen;
+                        self.index += 1;
+                        break :outer;
+                    },
+                    ')' => {
+                        r.tag = .rParen;
                         self.index += 1;
                         break :outer;
                     },
