@@ -40,6 +40,9 @@ test "math" {
         .a = @as(i8, 7),
         .b = @as(i8, 2),
     })});
+    try expectEqual(15, math("a - b", .{ .a = 20, .b = 5 }));
+    std.debug.print("\n{}\n", .{math("a - b", .{ .a = 1000000, .b = 5 })});
+    std.debug.print("\n{}\n", .{math("-a", .{ .a = 1000000 })});
 }
 
 // Using an allocator (even just a fixed buffer) doesn't work during comptime yet.
@@ -110,8 +113,24 @@ const Parser = struct {
 
     fn parseStatement(comptime self: *Parser, expectedBlockTerm: BlockTerm) *Ast {
         var lhs = switch (self.parseElement()) {
-            .operand => {
-                @panic("TODO: unary operations");
+            .operand => |op| {
+                var rhs = switch (self.parseElement()) {
+                    .operand => @compileError("Two operands in a row."),
+                    .value => |rhs| rhs,
+                    .blockTerm => {
+                        @compileError("Unexpected end of block");
+                    },
+                };
+                switch (self.parseElement()) {
+                    .operand => @compileError("Operand after unary operation"),
+                    .value => @compileError("Value after unary operation"),
+                    .blockTerm => |blockTerm| {
+                        if (expectedBlockTerm == blockTerm) {
+                            return UnaryOp.init(&self.alloc, op, rhs);
+                        }
+                        @compileError("Incorrect termination of a statement.");
+                    },
+                }
             },
             .value => |lhs| lhs,
             .blockTerm => {
@@ -129,7 +148,7 @@ const Parser = struct {
                     if (expectedBlockTerm == blockTerm) {
                         return lhs;
                     }
-                    @panic("Incorrect block term type.");
+                    @compileError("Incorrect termination of a statement.");
                 },
             };
             if (firstOp) |correctOp| {
@@ -144,6 +163,7 @@ const Parser = struct {
             };
             lhs = switch (op) {
                 .plus => BinaryOp.init(&self.alloc, lhs, BinaryOp.Op.addErr, rhs),
+                .minus => BinaryOp.init(&self.alloc, lhs, BinaryOp.Op.subErr, rhs),
                 else => @panic("Bad binary operation"),
             };
         }
@@ -162,7 +182,7 @@ const Parser = struct {
             .eof => {
                 return Element{ .blockTerm = BlockTerm.eof };
             },
-            .plus => {
+            .plus, .minus => {
                 return Element{ .operand = token.tag };
             },
             .identifier => {
@@ -175,12 +195,13 @@ const Parser = struct {
 const Ast = union(enum) {
     identifier: Identifier,
     binaryOp: BinaryOp,
-    // unary op.
+    unaryOp: UnaryOp,
 
     fn eval(comptime ast: *Ast, args: anytype) ast.ReturnType() {
         return switch (ast.*) {
             .identifier => |v| v.eval(args),
             .binaryOp => |v| v.eval(args),
+            .unaryOp => |v| v.eval(args),
         };
     }
 
@@ -188,6 +209,7 @@ const Ast = union(enum) {
         return switch (ast.*) {
             .identifier => |v| v.return_type,
             .binaryOp => |v| v.return_type,
+            .unaryOp => |v| v.return_type,
         };
     }
 };
@@ -230,6 +252,7 @@ const BinaryOp = struct {
 
     const Op = enum {
         addErr,
+        subErr,
         // mulErr,
     };
 
@@ -257,6 +280,43 @@ const BinaryOp = struct {
                 return self.lhs.eval(args) + self.rhs.eval(args);
             } else {
                 @compileError("No custom adding yet");
+            },
+            .subErr => if (comptime isBuiltinScalar(self.return_type)) {
+                return self.lhs.eval(args) - self.rhs.eval(args);
+            } else {
+                @compileError("No custom subtraction yet");
+            },
+        };
+    }
+};
+
+const UnaryOp = struct {
+    op: Op,
+    rhs: *Ast,
+    return_type: type,
+
+    const Op = enum {
+        negate,
+    };
+
+    fn init(comptime alloc: *StupidAlloc, opToken: Token.Tag, rhs: *Ast) *Ast {
+        var op = switch (opToken) {
+            .minus => Op.negate,
+            else => @compileError("Invalid unary operator"),
+        };
+        var r = alloc.next();
+        r.* = Ast{ .unaryOp = UnaryOp{
+            .op = op,
+            .rhs = rhs,
+            .return_type = rhs.ReturnType(),
+        } };
+        return r;
+    }
+
+    fn eval(comptime self: *const UnaryOp, args: anytype) self.return_type {
+        return switch (self.op) {
+            .negate => {
+                return -self.rhs.eval(args);
             },
         };
     }
@@ -326,6 +386,7 @@ const Token = struct {
         eof,
         identifier,
         plus,
+        minus,
     };
 };
 
@@ -370,6 +431,11 @@ const Tokenizer = struct {
                     },
                     '+' => {
                         r.tag = .plus;
+                        self.index += 1;
+                        break :outer;
+                    },
+                    '-' => {
+                        r.tag = .minus;
                         self.index += 1;
                         break :outer;
                     },
