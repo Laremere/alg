@@ -1,5 +1,6 @@
 const std = @import("std");
 const expectEqual = @import("std").testing.expectEqual;
+const Vector = std.meta.Vector;
 
 // TODO:
 //
@@ -42,7 +43,7 @@ test "math" {
     })});
     try expectEqual(15, math("a - b", .{ .a = 20, .b = 5 }));
     std.debug.print("\n{}\n", .{math("a - b", .{ .a = 1000000, .b = 5 })});
-    std.debug.print("\n{}\n", .{math("(-a) + a + (a+a+a)", .{ .a = 10 })});
+    // std.debug.print("\n{}\n", .{math("(-a) + a + (a+a+a", .{ .a = 10 })});
 }
 
 // Using an allocator (even just a fixed buffer) doesn't work during comptime yet.
@@ -63,6 +64,7 @@ const StupidAlloc = struct {
 };
 
 pub fn math(comptime eq: [:0]const u8, args: anytype) ReturnType(eq, @TypeOf(args)) {
+    @setEvalBranchQuota(10000);
     comptime var parser = comptime Parser.init(eq, @TypeOf(args));
     comptime var root = parser.parse();
     return root.eval(args);
@@ -487,3 +489,43 @@ const Tokenizer = struct {
         return self.buffer[token.start..token.end];
     }
 };
+
+pub fn Img(comptime T: type) type {
+    return struct {
+        v: Vector(2, T),
+
+        fn init(scalar: T, imaginary: T) Img(T) {
+            return Img(T){
+                .v = [_]T{ scalar, imaginary },
+            };
+        }
+
+        fn mul(self: Img(T), other: Img(T)) Img(T) {
+            // I have no clue if this Vector version is faster than
+            // just writing out the multiplcations.  Good practice
+            // with Vectors, though.
+            const scalarOnly: Vector(2, i32) = [_]i32{ 0, 0 };
+            const imaginaryOnly: Vector(2, i32) = [_]i32{ 1, 1 };
+            const flipped: Vector(2, i32) = [_]i32{ 1, 0 };
+            const invertISquared: Vector(2, T) = [_]T{ -1, 1 };
+
+            var otherS = @shuffle(T, other.v, undefined, scalarOnly);
+            var otherI = @shuffle(T, other.v, undefined, imaginaryOnly);
+            var selfFlipped = @shuffle(T, self.v, undefined, flipped);
+
+            return Img(T){
+                .v = (self.v * otherS) + (selfFlipped * otherI * invertISquared),
+            };
+        }
+
+        fn add(self: Img(T), other: Img(T)) Img(T) {
+            return Img(T){ .v = self.v + other.v };
+        }
+    };
+}
+
+test "imaginary" {
+    const T = Img(f32);
+    try expectEqual(T.init(1, 1), T.init(0, 1).add(T.init(1, 0)));
+    try expectEqual(T.init(-5, 10), T.init(1, 2).mul(T.init(3, 4)));
+}
