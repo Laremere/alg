@@ -35,7 +35,7 @@ const expectEqual = @import("std").testing.expectEqual;
 test "math" {
     std.debug.print("\n{}\n", .{math("a", .{ .a = @as(i8, 7) })});
     try expectEqual(@as(i8, 5), math("a", .{ .a = @as(i8, 5) }));
-    try expectEqual(@as(i8, 15), math("a + a + a +", .{ .a = @as(i8, 5) }));
+    try expectEqual(@as(i8, 15), math("a + a + a", .{ .a = @as(i8, 5) }));
     std.debug.print("\n{}\n", .{math("a + b", .{
         .a = @as(i8, 7),
         .b = @as(i8, 2),
@@ -60,23 +60,15 @@ const StupidAlloc = struct {
 };
 
 pub fn math(comptime eq: [:0]const u8, args: anytype) ReturnType(eq, @TypeOf(args)) {
-    comptime var alloc = StupidAlloc{
-        .asts = undefined,
-        .index = 0,
-    };
-    comptime var rootAst = comptime parse(&alloc, eq, @TypeOf(args));
-
-    return rootAst.eval(args);
+    comptime var parser = comptime Parser.init(eq, @TypeOf(args));
+    comptime var root = parser.parse();
+    return root.eval(args);
 }
 
 fn ReturnType(comptime eq: [:0]const u8, argsType: type) type {
-    comptime var alloc = StupidAlloc{
-        .asts = undefined,
-        .index = 0,
-    };
-    comptime var rootAst = comptime parse(&alloc, eq, argsType);
-
-    return rootAst.ReturnType();
+    comptime var parser = comptime Parser.init(eq, argsType);
+    comptime var root = parser.parse();
+    return root.ReturnType();
 }
 
 const BlockTerm = enum {
@@ -91,59 +83,94 @@ const BlockTerm = enum {
     }
 };
 
-fn parse(comptime alloc: *StupidAlloc, comptime eq: [:0]const u8, argsType: type) *Ast {
-    comptime var tokenizer = Tokenizer.init(eq);
-    return parseRec(alloc, eq, argsType, &tokenizer, BlockTerm.eof);
-}
+const Parser = struct {
+    alloc: StupidAlloc,
+    argsType: type,
+    tokenizer: Tokenizer,
 
-fn parseRec(comptime alloc: *StupidAlloc, comptime eq: [:0]const u8, argsType: type, comptime tokenizer: *Tokenizer, blockTerm: BlockTerm) *Ast {
-    var maybeLhs: ?*Ast = null;
-    var maybeBinaryOp: ?BinaryOp.Op = null;
-    while (true) {
-        comptime var token = comptime tokenizer.next();
+    // Careful: StupidAlloc is large, and pointers to it's allocations will change
+    // when it's moved.
+    fn init(eq: [:0]const u8, comptime argsType: type) Parser {
+        return Parser{
+            .alloc = StupidAlloc{
+                .asts = undefined,
+                .index = 0,
+            },
+            .argsType = argsType,
+            .tokenizer = Tokenizer.init(eq),
+        };
+    }
+
+    fn parse(comptime self: *Parser) *Ast {
+        // parse should only be called once, but it's easy to fix that not working,
+        // so why not?
+        self.tokenizer.index = 0;
+        return self.parseStatement(BlockTerm.eof);
+    }
+
+    fn parseStatement(comptime self: *Parser, expectedBlockTerm: BlockTerm) *Ast {
+        var lhs = switch (self.parseElement()) {
+            .operand => {
+                @panic("TODO: unary operations");
+            },
+            .value => |lhs| lhs,
+            .blockTerm => {
+                @panic("Empty block");
+            },
+        };
+        var firstOp: ?Token.Tag = null;
+        while (true) {
+            var op = switch (self.parseElement()) {
+                .operand => |op| op,
+                .value => {
+                    @panic("Multiple values in a row");
+                },
+                .blockTerm => |blockTerm| {
+                    if (expectedBlockTerm == blockTerm) {
+                        return lhs;
+                    }
+                    @panic("Incorrect block term type.");
+                },
+            };
+            if (firstOp) |correctOp| {
+                if (op != correctOp) {
+                    @panic("Mismatching operations");
+                }
+            }
+            var rhs = switch (self.parseElement()) {
+                .operand => @panic("Unexpected double operand"),
+                .value => |rhs| rhs,
+                .blockTerm => @panic("Unexpected block termination"),
+            };
+            lhs = switch (op) {
+                .plus => BinaryOp.init(&self.alloc, lhs, BinaryOp.Op.addErr, rhs),
+                else => @panic("Bad binary operation"),
+            };
+        }
+    }
+
+    const Element = union(enum) {
+        operand: Token.Tag,
+        value: *Ast,
+        blockTerm: BlockTerm,
+    };
+
+    fn parseElement(comptime self: *Parser) Element {
+        var token = self.tokenizer.next();
         switch (token.tag) {
             .invalid => @compileError("Invalid equation"),
             .eof => {
-                if (blockTerm == BlockTerm.eof) {
-                    if (maybeLhs) |lhs| {
-                        return lhs;
-                    }
-                    @compileError("Block has no value");
-                    // if (maybeBinaryOp) |binaryOp| {
-
-                    // }
-                }
-                @compileError("Equation ended early, expected " ++ BlockTerm.name());
+                return Element{ .blockTerm = BlockTerm.eof };
             },
             .plus => {
-                if (maybeLhs) |_| {
-                    if (maybeBinaryOp) |binaryOp| {
-                        if (binaryOp != BinaryOp.Op.addErr) {
-                            @compileError("math does not support different operators within the same scope.");
-                        }
-                    } else {
-                        maybeBinaryOp = BinaryOp.Op.addErr;
-                    }
-                } else {
-                    @compileError("Found +, expected a value before a binary operation.");
-                }
+                return Element{ .operand = token.tag };
             },
             .identifier => {
-                const name = eq[token.start..token.end];
-                var rhs = Identifier.init(alloc, name, argsType);
-                if (maybeLhs) |lhs| {
-                    if (maybeBinaryOp) |binaryOp| {
-                        maybeLhs = BinaryOp.init(alloc, lhs, binaryOp, rhs);
-                    } else {
-                        @compileError("Two values with no operation between them.");
-                    }
-                } else {
-                    maybeLhs = rhs;
-                }
+                return Element{ .value = Identifier.init(&self.alloc, self.tokenizer.source(token), self.argsType) };
             },
         }
     }
-}
+};
 
 const Ast = union(enum) {
     identifier: Identifier,
@@ -363,5 +390,9 @@ const Tokenizer = struct {
         // @compileLog("Tag out", @tagName(r.tag));
         r.end = self.index;
         return r;
+    }
+
+    fn source(self: *Tokenizer, token: Token) []const u8 {
+        return self.buffer[token.start..token.end];
     }
 };
