@@ -26,13 +26,6 @@ const Vector = std.meta.Vector;
 //
 // Make parse errors actually useful.
 
-// pub fn Matrix(comptime T: type, comptime rows: comptime_int, columns: comptime_int) type {
-//     return struct {
-//         // Values stored in column major order.
-//         v: [rows * columns]T,
-//     };
-// }
-
 test "math" {
     std.debug.print("\n{}\n", .{math("a", .{ .a = @as(i8, 7) })});
     try expectEqual(@as(i8, 5), math("a", .{ .a = @as(i8, 5) }));
@@ -528,4 +521,127 @@ test "imaginary" {
     const T = Img(f32);
     try expectEqual(T.init(1, 1), T.init(0, 1).add(T.init(1, 0)));
     try expectEqual(T.init(-5, 10), T.init(1, 2).mul(T.init(3, 4)));
+}
+
+pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type {
+    if (!isBuiltinScalar(T)) {
+        @compileError("Matrix only supports built in values");
+    }
+
+    return struct {
+        // Stored in column major order.
+        values: [columns][rows]T,
+
+        const T = T;
+        const rows = rows;
+        const columns = columns;
+        const Self = @This();
+
+        pub fn lit(v: anytype) @This() {
+            const VType = @TypeOf(v);
+            const vTypeInfo = @typeInfo(VType);
+            if (vTypeInfo != .Struct) {
+                @compileError("Expected tuple or struct argument, found " ++ @typeName(VType));
+            }
+            const fieldsInfo = vTypeInfo.Struct.fields;
+
+            if (fieldsInfo.len != rows * columns) {
+                @compileError("Wrong size literal for matrix");
+            }
+
+            var r: @This() = undefined;
+            comptime var column: usize = 0;
+            inline while (column < columns) : (column += 1) {
+                comptime var row: usize = 0;
+                inline while (row < rows) : (row += 1) {
+                    r.values[column][row] = @field(v, fieldsInfo[row * columns + column].name);
+                }
+            }
+            return r;
+        }
+
+        pub fn mul(self: *Self, other: anytype) MatrixMultiplyReturnType(Self, @TypeOf(other)) {
+            const Other = @TypeOf(other);
+            var r: MatrixMultiplyReturnType(Self, Other) = undefined;
+
+            var selfRows: [rows]Vector(columns, T) = undefined;
+            // TODO: Maybe putting into a big array and shuffling out values
+            // would be faster?
+
+            {
+                var i: usize = 0;
+                while (i < rows) : (i += 1) {
+                    var row: [columns]T = undefined;
+                    var j: usize = 0;
+                    while (j < columns) : (j += 1) {
+                        row[j] = self.values[j][i];
+                    }
+                    selfRows[i] = row;
+                }
+            }
+
+            var i: usize = 0;
+            while (i < Other.columns) : (i += 1) {
+                // columns == other.rows
+                var column: Vector(Other.rows, T) = other.values[i];
+                var j: usize = 0;
+                while (j < rows) : (j += 1) {
+                    r.values[i][j] = @reduce(.Add, selfRows[j] * column);
+                }
+            }
+
+            return r;
+        }
+    };
+}
+
+fn MatrixMultiplyReturnType(a: anytype, b: anytype) type {
+    if (a.T != b.T) {
+        @compileError("Matrix multiplcation value types must match");
+    }
+    if (a.columns != b.rows) {
+        @compileError("Matrix multiplcation sizes incompatible.");
+    }
+    return Matrix(a.T, a.rows, b.columns);
+}
+
+test "matrix multiplcation type" {
+    const A = Matrix(f32, 5, 3);
+    const B = Matrix(f32, 3, 4);
+    const C = comptime MatrixMultiplyReturnType(A, B);
+    try expectEqual(5, C.rows);
+    try expectEqual(4, C.columns);
+}
+
+test "matrix literal" {
+    var a = Matrix(f32, 2, 2).lit(.{
+        2, 3,
+        4, 5,
+    });
+    try expectEqual(@as(f32, 2), a.values[0][0]);
+    try expectEqual(@as(f32, 4), a.values[0][1]);
+    try expectEqual(@as(f32, 3), a.values[1][0]);
+    try expectEqual(@as(f32, 5), a.values[1][1]);
+}
+
+test "matrix multiplcation" {
+    var a = Matrix(f32, 2, 3).lit(.{
+        2, 3, 4,
+        5, 6, 7,
+    });
+
+    var b = Matrix(f32, 3, 2).lit(.{
+        8,  9,
+        10, 11,
+        12, 13,
+    });
+
+    var c = a.mul(b);
+
+    try expectEqual(Matrix(f32, 2, 2).lit(.{
+        94,  103,
+        184, 202,
+    }), c);
+
+    std.debug.print("\n{}\n", .{c});
 }
