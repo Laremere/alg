@@ -560,7 +560,7 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             return r;
         }
 
-        pub fn mul(self: *Self, other: anytype) MatrixMultiplyReturnType(Self, @TypeOf(other)) {
+        pub fn mul(self: Self, other: anytype) MatrixMultiplyReturnType(Self, @TypeOf(other)) {
             const Other = @TypeOf(other);
             var r: MatrixMultiplyReturnType(Self, Other) = undefined;
 
@@ -590,6 +590,17 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
                 }
             }
 
+            return r;
+        }
+
+        pub fn add(self: Self, other: Self) Self {
+            // TODO: Is there a way to do vector addition on the whole contents
+            // while still letting on individual columns work??
+            var r: Self = undefined;
+            var i: usize = 0;
+            while (i < columns) : (i += 1) {
+                r.values[i] = @as(Vector(rows, T), self.values[i]) + @as(Vector(rows, T), other.values[i]);
+            }
             return r;
         }
     };
@@ -643,5 +654,24 @@ test "matrix multiplcation" {
         184, 202,
     }), c);
 
-    std.debug.print("\n{}\n", .{c});
+    // std.debug.print("\n{}\n", .{c});
+}
+
+test "matrix addition" {
+    var a = Matrix(f32, 2, 3).lit(.{
+        2, 3, 4,
+        5, 6, 7,
+    });
+
+    var b = Matrix(f32, 2, 3).lit(.{
+        8,  9,  10,
+        11, 12, 13,
+    });
+
+    var c = a.add(b);
+
+    try expectEqual(Matrix(f32, 2, 3).lit(.{
+        10, 12, 14,
+        16, 18, 20,
+    }), c);
 }
