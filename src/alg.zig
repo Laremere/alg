@@ -603,6 +603,16 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             }
             return r;
         }
+
+        pub fn scale(self: Self, scaler: T) Self {
+            var r: Self = undefined;
+            var i: usize = 0;
+            var scalerVec = @splat(rows, scaler);
+            while (i < columns) : (i += 1) {
+                r.values[i] = @as(Vector(rows, T), self.values[i]) * scalerVec;
+            }
+            return r;
+        }
     };
 }
 
@@ -674,4 +684,18 @@ test "matrix addition" {
         10, 12, 14,
         16, 18, 20,
     }), c);
+}
+
+test "matrix scale" {
+    var a = Matrix(f32, 2, 2).lit(.{
+        1, 2,
+        3, 4,
+    });
+
+    var b = a.scale(2);
+
+    try expectEqual(Matrix(f32, 2, 2).lit(.{
+        2, 4,
+        6, 8,
+    }), b);
 }
