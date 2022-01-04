@@ -158,7 +158,7 @@ const Parser = struct {
                 .value => |rhs| rhs,
                 .blockTerm => @compileError("Unexpected block termination"),
             };
-            lhs = BinaryOp.init(&self.alloc, lhs, op, rhs);
+            lhs = makeBinaryOp(&self.alloc, lhs, op, rhs);
         }
     }
 
@@ -196,13 +196,15 @@ const Parser = struct {
 
 const Ast = union(enum) {
     identifier: Identifier,
-    binaryOp: BinaryOp,
+    scalerBinaryOp: ScalerBinaryOp,
+    fnBinaryOp: FnBinaryOp,
     unaryOp: UnaryOp,
 
     fn eval(comptime ast: *Ast, args: anytype) ast.ReturnType() {
         return switch (ast.*) {
             .identifier => |v| v.eval(args),
-            .binaryOp => |v| v.eval(args),
+            .scalerBinaryOp => |v| v.eval(args),
+            .fnBinaryOp => |v| v.eval(args),
             .unaryOp => |v| v.eval(args),
         };
     }
@@ -210,7 +212,8 @@ const Ast = union(enum) {
     fn ReturnType(comptime ast: *Ast) type {
         return switch (ast.*) {
             .identifier => |v| v.ReturnType,
-            .binaryOp => |v| v.ReturnType,
+            .scalerBinaryOp => |v| v.ReturnType,
+            .fnBinaryOp => |v| v.ReturnType,
             .unaryOp => |v| v.ReturnType,
         };
     }
@@ -246,7 +249,99 @@ const Identifier = struct {
     }
 };
 
-const BinaryOp = struct {
+fn makeBinaryOp(comptime alloc: *StupidAlloc, lhs: *Ast, opToken: Token.Tag, rhs: *Ast) *Ast {
+    const r = alloc.next();
+    const Lhs = lhs.ReturnType();
+    const Rhs = rhs.ReturnType();
+
+    if (isBuiltinScalar(Lhs) and Lhs == Rhs) {
+        const op = switch (opToken) {
+            .plus => ScalerBinaryOp.Op.addErr,
+            .minus => ScalerBinaryOp.Op.subErr,
+            .asterisk => ScalerBinaryOp.Op.mulErr,
+            else => @compileError("Invalid binary operator for scaler value"),
+        };
+
+        r.* = Ast{
+            .scalerBinaryOp = ScalerBinaryOp{
+                .lhs = lhs,
+                .op = op,
+                .rhs = rhs,
+                .ReturnType = Lhs,
+            },
+        };
+        return r;
+    }
+
+    const opName = switch (opToken) {
+        .plus => "add",
+        .minus => "sub",
+        .asterisk => "mul",
+        else => @compileError("Invalid binary operator for method call"),
+    };
+
+    if (CheckTypeForBinaryMethod(opName, Lhs, Rhs)) |T| {
+        r.* = Ast{ .fnBinaryOp = FnBinaryOp{
+            .lhs = lhs,
+            .op = opName,
+            .rhs = rhs,
+            .ReturnType = T,
+        } };
+        return r;
+    }
+
+    const altOpName = opName ++ "Swap";
+    if (CheckTypeForBinaryMethod(altOpName, Rhs, Lhs)) |T| {
+        r.* = Ast{ .fnBinaryOp = FnBinaryOp{
+            .lhs = rhs,
+            .op = altOpName,
+            .rhs = lhs,
+            .ReturnType = T,
+        } };
+        return r;
+    }
+    @compileError(@typeName(Lhs) ++ " and " ++ @typeName(Rhs) ++ " are incompatible for " ++ opName ++ ".");
+}
+
+// If A has a method named opName, which takes B, return the return type.  Otherwise null.
+fn CheckTypeForBinaryMethod(comptime opName: [:0]const u8, comptime A: type, comptime B: type) ?type {
+    if (isBuiltinScalar(A)) {
+        return null;
+    }
+    if (!@hasDecl(A, opName)) {
+        return null;
+    }
+
+    const declInfo = std.meta.declarationInfo(A, opName);
+    const FnType = switch (declInfo.data) {
+        .Type => return null,
+        .Var => return null,
+        .Fn => |f| f.fn_type,
+    };
+
+    const fnTypeInfo = switch (@typeInfo(FnType)) {
+        .Fn => |f| f,
+        else => unreachable,
+    };
+
+    if (fnTypeInfo.args.len == 2 and
+        fnTypeInfo.args[0].arg_type == A and
+        fnTypeInfo.args[1].arg_type == B)
+    {
+        return fnTypeInfo.return_type;
+    }
+
+    const fnName = opName ++ "ReturnType";
+    if (@hasDecl(A, fnName)) {
+        const R = @field(A, fnName)(B);
+        if (R != void) {
+            return R;
+        }
+    }
+    return null;
+}
+
+const ScalerBinaryOp = struct {
     lhs: *Ast,
     op: Op,
     rhs: *Ast,
@@ -256,65 +351,31 @@ const BinaryOp = struct {
         addErr,
         subErr,
         mulErr,
-        // mulErr,
     };
 
-    fn init(comptime alloc: *StupidAlloc, lhs: *Ast, opToken: Token.Tag, rhs: *Ast) *Ast {
-        var op = switch (opToken) {
-            .plus => Op.addErr,
-            .minus => Op.subErr,
-            .asterisk => Op.mulErr,
-            else => @compileError("Invalid binary operator"),
-        };
-
-        var lhsRet = lhs.ReturnType();
-        var rhsRet = rhs.ReturnType();
-
-        var RetType = switch (op) {
-            .addErr => lhsRet,
-            .subErr => lhsRet,
-            .mulErr => OpReturnType("mul", lhsRet, rhsRet),
-        };
-
-        var r = alloc.next();
-        r.* = Ast{
-            .binaryOp = BinaryOp{
-                .lhs = lhs,
-                .op = op,
-                .rhs = rhs,
-                .ReturnType = RetType,
-            },
-        };
-        return r;
-    }
-
-    fn eval(comptime self: *const BinaryOp, args: anytype) self.ReturnType {
-        var lhs = self.lhs.eval(args);
-        const Lhs = @TypeOf(lhs);
-        var rhs = self.rhs.eval(args);
-        const Rhs = @TypeOf(rhs);
-
-        if (comptime isBuiltinScalar(Lhs) and isBuiltinScalar(Rhs)) {
-            return switch (self.op) {
-                .addErr => lhs + rhs,
-                .subErr => lhs - rhs,
-                .mulErr => lhs * rhs,
-            };
-        }
-
-        if (comptime isBuiltinScalar(Lhs)) {
-            @compileError(@tagName(self.op) ++ "does not support mixed types");
-        }
-
-        if (comptime isBuiltinScalar(Rhs)) {
-            @compileError(@tagName(self.op) ++ "does not support mixed types");
-        }
+    fn eval(comptime self: *const ScalerBinaryOp, args: anytype) self.ReturnType {
+        const lhs = self.lhs.eval(args);
+        const rhs = self.rhs.eval(args);
 
         return switch (self.op) {
-            .addErr => lhs.add(rhs),
-            .subErr => lhs.sub(rhs),
-            .mulErr => lhs.mul(rhs),
+            .addErr => lhs + rhs,
+            .subErr => lhs - rhs,
+            .mulErr => lhs * rhs,
         };
+    }
+};
+
+const FnBinaryOp = struct {
+    lhs: *Ast,
+    op: [:0]const u8,
+    rhs: *Ast,
+    ReturnType: type,
+
+    fn eval(comptime self: *const FnBinaryOp, args: anytype) self.ReturnType {
+        const lhs = self.lhs.eval(args);
+        const rhs = self.rhs.eval(args);
+
+        return @field(lhs, self.op)(rhs);
     }
 };
 
@@ -448,7 +509,6 @@ const Tokenizer = struct {
 
         outer: while (true) : (self.index += 1) {
             const c = if (self.index < self.buffer.len) self.buffer[self.index] else 0;
-            // @compileLog(@tagName(state), self.index, c);
             switch (state) {
                 .start => switch (c) {
                     0 => {
@@ -499,7 +559,6 @@ const Tokenizer = struct {
                 },
             }
         }
-        // @compileLog("Tag out", @tagName(r.tag));
         r.end = self.index;
         return r;
     }
@@ -562,6 +621,7 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
         const rows = rows;
         const columns = columns;
         const Self = @This();
+        const isMatrixType = true;
 
         pub fn lit(v: anytype) @This() {
             const VType = @TypeOf(v);
@@ -588,6 +648,9 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
 
         fn mul(self: Self, other: anytype) Self.mulReturnType(@TypeOf(other)) {
             const Other = @TypeOf(other);
+            if (T == Other) {
+                return self.mulSwap(other);
+            }
             var r: Self.mulReturnType(@TypeOf(other)) = undefined;
 
             var selfRows: [rows]Vector(columns, T) = undefined;
@@ -620,6 +683,12 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
         }
 
         fn mulReturnType(comptime Other: type) type {
+            if (T == Other) {
+                return Self;
+            }
+            if (!@hasDecl(Other, "isMatrixType")) {
+                return void;
+            }
             if (T != Other.T) {
                 return void;
                 // @compileError("Matrix multiplcation value types must match");
@@ -629,6 +698,16 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
                 // @compileError("Matrix multiplcation sizes incompatible.");
             }
             return Matrix(T, rows, Other.columns);
+        }
+
+        fn mulSwap(self: Self, scaler: T) Self {
+            var r: Self = undefined;
+            var i: usize = 0;
+            var scalerVec = @splat(rows, scaler);
+            while (i < columns) : (i += 1) {
+                r.values[i] = @as(Vector(rows, T), self.values[i]) * scalerVec;
+            }
+            return r;
         }
 
         fn add(self: Self, other: Self) Self {
@@ -650,78 +729,7 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             }
             return r;
         }
-
-        fn scale(self: Self, scaler: T) Self {
-            var r: Self = undefined;
-            var i: usize = 0;
-            var scalerVec = @splat(rows, scaler);
-            while (i < columns) : (i += 1) {
-                r.values[i] = @as(Vector(rows, T), self.values[i]) * scalerVec;
-            }
-            return r;
-        }
     };
-}
-
-// TODO: This method needs to intelegently look at the lhs type first, and decide
-// if the operation can take the rhs.  If Mul or MulLhs take an anytype, it must have
-// a Mul[Lhs]ReturnType function, respectively.
-// First try a.Mul(b), and only if it doesn't have a return type or can't be called / doesn't exist,
-// then do b.MulLhs(a).  Do this for all operations, so types can only implement the things they
-// can do.  And types from other packages can work.  Probably move matrix into a different package
-// once this all works!
-
-fn OpReturnType(comptime opName: [:0]const u8, comptime a: type, comptime b: type) type {
-    if (isBuiltinScalar(a) and a == b) {
-        return a;
-    }
-    if (BinaryMethodReturnType(a, opName, b)) |T| {
-        return T;
-    }
-    const fnName = opName ++ "ReturnType";
-    if (@hasDecl(a, fnName)) {
-        const R = @field(a, fnName)(b);
-        if (R != void) {
-            return R;
-        }
-    }
-    const fnNameLhs = opName ++ "Lhs";
-    if (BinaryMethodReturnType(b, fnNameLhs, a)) |T| {
-        return T;
-    }
-    const fnNameLhsReturn = fnNameLhs ++ "ReturnType";
-    if (@hasDecl(b, fnNameLhsReturn)) {
-        const R = @call(b, fnNameLhsReturn, .{a});
-        if (R != void) {
-            return R;
-        }
-    }
-
-    @compileError(@typeName(a) ++ " and " ++ @typeName(b) ++ " are incompatible for " ++ opName ++ ".");
-}
-
-fn BinaryMethodReturnType(comptime T: type, name: [:0]const u8, comptime Other: type) ?type {
-    if (!@hasDecl(T, name)) {
-        return null;
-    }
-
-    const declInfo = std.meta.declarationInfo(T, name);
-    const FnType = switch (declInfo.data) {
-        .Type => return null,
-        .Var => return null,
-        .Fn => |f| f.fn_type,
-    };
-    const fnTypeInfo = switch (@typeInfo(FnType)) {
-        .Fn => |f| f,
-        else => return null,
-    };
-    if (fnTypeInfo.args.len == 2 and
-        fnTypeInfo.args[0].arg_type == T and
-        fnTypeInfo.args[1].arg_type == Other)
-    {
-        return fnTypeInfo.return_type;
-    }
-    return null;
 }
 
 test "matrix multiplcation type" {
@@ -805,11 +813,25 @@ test "matrix scale" {
         1, 2,
         3, 4,
     });
+    var b: f32 = 2;
 
-    var b = a.scale(2);
+    var c = math("a * b", .{
+        .a = a,
+        .b = b,
+    });
 
     try expectEqual(Matrix(f32, 2, 2).lit(.{
         2, 4,
         6, 8,
-    }), b);
+    }), c);
+
+    var d = math("b * a", .{
+        .a = a,
+        .b = b,
+    });
+
+    try expectEqual(Matrix(f32, 2, 2).lit(.{
+        2, 4,
+        6, 8,
+    }), d);
 }
