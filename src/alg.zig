@@ -183,7 +183,7 @@ const Parser = struct {
                 return Element{ .blockTerm = BlockTerm.rParen };
             },
 
-            .plus, .minus => {
+            .plus, .minus, .asterisk => {
                 return Element{ .operand = token.tag };
             },
 
@@ -255,6 +255,7 @@ const BinaryOp = struct {
     const Op = enum {
         addErr,
         subErr,
+        mulErr,
         // mulErr,
     };
 
@@ -262,21 +263,26 @@ const BinaryOp = struct {
         var op = switch (opToken) {
             .plus => Op.addErr,
             .minus => Op.subErr,
+            .asterisk => Op.mulErr,
             else => @compileError("Invalid binary operator"),
         };
 
         var lhsRet = lhs.ReturnType();
         var rhsRet = rhs.ReturnType();
-        if (lhsRet != rhsRet) {
-            @compileError("Values on either side of binary op do not match type.");
-        }
+
+        var RetType = switch (op) {
+            .addErr => lhsRet,
+            .subErr => lhsRet,
+            .mulErr => OpReturnType("mul", lhsRet, rhsRet),
+        };
+
         var r = alloc.next();
         r.* = Ast{
             .binaryOp = BinaryOp{
                 .lhs = lhs,
                 .op = op,
                 .rhs = rhs,
-                .ReturnType = lhsRet,
+                .ReturnType = RetType,
             },
         };
         return r;
@@ -292,6 +298,7 @@ const BinaryOp = struct {
             return switch (self.op) {
                 .addErr => lhs + rhs,
                 .subErr => lhs - rhs,
+                .mulErr => lhs * rhs,
             };
         }
 
@@ -306,6 +313,7 @@ const BinaryOp = struct {
         return switch (self.op) {
             .addErr => lhs.add(rhs),
             .subErr => lhs.sub(rhs),
+            .mulErr => lhs.mul(rhs),
         };
     }
 };
@@ -407,6 +415,7 @@ const Token = struct {
         identifier,
         plus,
         minus,
+        asterisk,
         lParen,
         rParen,
     };
@@ -458,6 +467,11 @@ const Tokenizer = struct {
                     },
                     '-' => {
                         r.tag = .minus;
+                        self.index += 1;
+                        break :outer;
+                    },
+                    '*' => {
+                        r.tag = .asterisk;
                         self.index += 1;
                         break :outer;
                     },
@@ -572,9 +586,9 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             return r;
         }
 
-        fn mul(self: Self, other: anytype) MatrixMultiplyReturnType(Self, @TypeOf(other)) {
+        fn mul(self: Self, other: anytype) Self.mulReturnType(@TypeOf(other)) {
             const Other = @TypeOf(other);
-            var r: MatrixMultiplyReturnType(Self, Other) = undefined;
+            var r: Self.mulReturnType(@TypeOf(other)) = undefined;
 
             var selfRows: [rows]Vector(columns, T) = undefined;
             // TODO: Maybe putting into a big array and shuffling out values
@@ -603,6 +617,18 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             }
 
             return r;
+        }
+
+        fn mulReturnType(comptime Other: type) type {
+            if (T != Other.T) {
+                return void;
+                // @compileError("Matrix multiplcation value types must match");
+            }
+            if (columns != Other.rows) {
+                return void;
+                // @compileError("Matrix multiplcation sizes incompatible.");
+            }
+            return Matrix(T, rows, Other.columns);
         }
 
         fn add(self: Self, other: Self) Self {
@@ -637,20 +663,71 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
     };
 }
 
-fn MatrixMultiplyReturnType(a: anytype, b: anytype) type {
-    if (a.T != b.T) {
-        @compileError("Matrix multiplcation value types must match");
+// TODO: This method needs to intelegently look at the lhs type first, and decide
+// if the operation can take the rhs.  If Mul or MulLhs take an anytype, it must have
+// a Mul[Lhs]ReturnType function, respectively.
+// First try a.Mul(b), and only if it doesn't have a return type or can't be called / doesn't exist,
+// then do b.MulLhs(a).  Do this for all operations, so types can only implement the things they
+// can do.  And types from other packages can work.  Probably move matrix into a different package
+// once this all works!
+
+fn OpReturnType(comptime opName: [:0]const u8, comptime a: type, comptime b: type) type {
+    if (isBuiltinScalar(a) and a == b) {
+        return a;
     }
-    if (a.columns != b.rows) {
-        @compileError("Matrix multiplcation sizes incompatible.");
+    if (BinaryMethodReturnType(a, opName, b)) |T| {
+        return T;
     }
-    return Matrix(a.T, a.rows, b.columns);
+    const fnName = opName ++ "ReturnType";
+    if (@hasDecl(a, fnName)) {
+        const R = @field(a, fnName)(b);
+        if (R != void) {
+            return R;
+        }
+    }
+    const fnNameLhs = opName ++ "Lhs";
+    if (BinaryMethodReturnType(b, fnNameLhs, a)) |T| {
+        return T;
+    }
+    const fnNameLhsReturn = fnNameLhs ++ "ReturnType";
+    if (@hasDecl(b, fnNameLhsReturn)) {
+        const R = @call(b, fnNameLhsReturn, .{a});
+        if (R != void) {
+            return R;
+        }
+    }
+
+    @compileError(@typeName(a) ++ " and " ++ @typeName(b) ++ " are incompatible for " ++ opName ++ ".");
+}
+
+fn BinaryMethodReturnType(comptime T: type, name: [:0]const u8, comptime Other: type) ?type {
+    if (!@hasDecl(T, name)) {
+        return null;
+    }
+
+    const declInfo = std.meta.declarationInfo(T, name);
+    const FnType = switch (declInfo.data) {
+        .Type => return null,
+        .Var => return null,
+        .Fn => |f| f.fn_type,
+    };
+    const fnTypeInfo = switch (@typeInfo(FnType)) {
+        .Fn => |f| f,
+        else => return null,
+    };
+    if (fnTypeInfo.args.len == 2 and
+        fnTypeInfo.args[0].arg_type == T and
+        fnTypeInfo.args[1].arg_type == Other)
+    {
+        return fnTypeInfo.return_type;
+    }
+    return null;
 }
 
 test "matrix multiplcation type" {
     const A = Matrix(f32, 5, 3);
     const B = Matrix(f32, 3, 4);
-    const C = comptime MatrixMultiplyReturnType(A, B);
+    const C = comptime A.mulReturnType(B);
     try expectEqual(5, C.rows);
     try expectEqual(4, C.columns);
 }
@@ -678,7 +755,10 @@ test "matrix multiplcation" {
         12, 13,
     });
 
-    var c = a.mul(b);
+    var c = math("a * b", .{
+        .a = a,
+        .b = b,
+    });
 
     try expectEqual(Matrix(f32, 2, 2).lit(.{
         94,  103,
