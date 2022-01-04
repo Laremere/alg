@@ -209,16 +209,16 @@ const Ast = union(enum) {
 
     fn ReturnType(comptime ast: *Ast) type {
         return switch (ast.*) {
-            .identifier => |v| v.return_type,
-            .binaryOp => |v| v.return_type,
-            .unaryOp => |v| v.return_type,
+            .identifier => |v| v.ReturnType,
+            .binaryOp => |v| v.ReturnType,
+            .unaryOp => |v| v.ReturnType,
         };
     }
 };
 
 const Identifier = struct {
     name: []const u8,
-    return_type: type,
+    ReturnType: type,
 
     fn init(comptime alloc: *StupidAlloc, name: []const u8, comptime argsType: type) *Ast {
         comptime var S = switch (@typeInfo(argsType)) {
@@ -231,7 +231,7 @@ const Identifier = struct {
                 r.* = Ast{
                     .identifier = Identifier{
                         .name = name,
-                        .return_type = field.field_type,
+                        .ReturnType = field.field_type,
                     },
                 };
                 return r;
@@ -241,7 +241,7 @@ const Identifier = struct {
         }
     }
 
-    fn eval(comptime ident: *const Identifier, args: anytype) ident.return_type {
+    fn eval(comptime ident: *const Identifier, args: anytype) ident.ReturnType {
         return @field(args, ident.name);
     }
 };
@@ -250,7 +250,7 @@ const BinaryOp = struct {
     lhs: *Ast,
     op: Op,
     rhs: *Ast,
-    return_type: type,
+    ReturnType: type,
 
     const Op = enum {
         addErr,
@@ -276,24 +276,36 @@ const BinaryOp = struct {
                 .lhs = lhs,
                 .op = op,
                 .rhs = rhs,
-                .return_type = lhsRet,
+                .ReturnType = lhsRet,
             },
         };
         return r;
     }
 
-    fn eval(comptime self: *const BinaryOp, args: anytype) self.return_type {
+    fn eval(comptime self: *const BinaryOp, args: anytype) self.ReturnType {
+        var lhs = self.lhs.eval(args);
+        const Lhs = @TypeOf(lhs);
+        var rhs = self.rhs.eval(args);
+        const Rhs = @TypeOf(rhs);
+
+        if (comptime isBuiltinScalar(Lhs) and isBuiltinScalar(Rhs)) {
+            return switch (self.op) {
+                .addErr => lhs + rhs,
+                .subErr => lhs - rhs,
+            };
+        }
+
+        if (comptime isBuiltinScalar(Lhs)) {
+            @compileError(@tagName(self.op) ++ "does not support mixed types");
+        }
+
+        if (comptime isBuiltinScalar(Rhs)) {
+            @compileError(@tagName(self.op) ++ "does not support mixed types");
+        }
+
         return switch (self.op) {
-            .addErr => if (comptime isBuiltinScalar(self.return_type)) {
-                return self.lhs.eval(args) + self.rhs.eval(args);
-            } else {
-                @compileError("No custom adding yet");
-            },
-            .subErr => if (comptime isBuiltinScalar(self.return_type)) {
-                return self.lhs.eval(args) - self.rhs.eval(args);
-            } else {
-                @compileError("No custom subtraction yet");
-            },
+            .addErr => lhs.add(rhs),
+            .subErr => lhs.sub(rhs),
         };
     }
 };
@@ -301,7 +313,7 @@ const BinaryOp = struct {
 const UnaryOp = struct {
     op: Op,
     rhs: *Ast,
-    return_type: type,
+    ReturnType: type,
 
     const Op = enum {
         negate,
@@ -316,12 +328,12 @@ const UnaryOp = struct {
         r.* = Ast{ .unaryOp = UnaryOp{
             .op = op,
             .rhs = rhs,
-            .return_type = rhs.ReturnType(),
+            .ReturnType = rhs.ReturnType(),
         } };
         return r;
     }
 
-    fn eval(comptime self: *const UnaryOp, args: anytype) self.return_type {
+    fn eval(comptime self: *const UnaryOp, args: anytype) self.ReturnType {
         return switch (self.op) {
             .negate => {
                 return -self.rhs.eval(args);
@@ -560,7 +572,7 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             return r;
         }
 
-        pub fn mul(self: Self, other: anytype) MatrixMultiplyReturnType(Self, @TypeOf(other)) {
+        fn mul(self: Self, other: anytype) MatrixMultiplyReturnType(Self, @TypeOf(other)) {
             const Other = @TypeOf(other);
             var r: MatrixMultiplyReturnType(Self, Other) = undefined;
 
@@ -593,7 +605,7 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             return r;
         }
 
-        pub fn add(self: Self, other: Self) Self {
+        fn add(self: Self, other: Self) Self {
             // TODO: Is there a way to do vector addition on the whole contents
             // while still letting on individual columns work??
             var r: Self = undefined;
@@ -604,7 +616,16 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             return r;
         }
 
-        pub fn scale(self: Self, scaler: T) Self {
+        fn sub(self: Self, other: Self) Self {
+            var r: Self = undefined;
+            var i: usize = 0;
+            while (i < columns) : (i += 1) {
+                r.values[i] = @as(Vector(rows, T), self.values[i]) - @as(Vector(rows, T), other.values[i]);
+            }
+            return r;
+        }
+
+        fn scale(self: Self, scaler: T) Self {
             var r: Self = undefined;
             var i: usize = 0;
             var scalerVec = @splat(rows, scaler);
@@ -678,11 +699,24 @@ test "matrix addition" {
         11, 12, 13,
     });
 
-    var c = a.add(b);
+    var c = math("a + b", .{
+        .a = a,
+        .b = b,
+    });
 
     try expectEqual(Matrix(f32, 2, 3).lit(.{
         10, 12, 14,
         16, 18, 20,
+    }), c);
+
+    c = math("a - b", .{
+        .a = a,
+        .b = b,
+    });
+
+    try expectEqual(Matrix(f32, 2, 3).lit(.{
+        -6, -6, -6,
+        -6, -6, -6,
     }), c);
 }
 
