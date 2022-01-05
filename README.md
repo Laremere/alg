@@ -2,7 +2,7 @@
 
 alg.math does concise formulas for custom types.  Similar to operator overloading in other languages.
 
-I'm making this for a private project which needs to do various types of algebraic math.  Unless Alg takes on a life of its own, things will mostly be implemented whent I need them.
+I'm making this for a private project which needs to do various types of algebraic math.  Unless Alg takes on a life of its own, things will mostly be implemented whent I need them.  Also I'm new to Zig and things are likely to not be idiomatic.  Issues, comments, and requests are welcome, but will only be acted upon as I see fit.
 
 Example:
 
