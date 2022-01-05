@@ -7,13 +7,13 @@ pub fn Img(comptime T: type) type {
     return struct {
         v: Vector(2, T),
 
-        fn init(scalar: T, imaginary: T) Img(T) {
+        pub fn init(scalar: T, imaginary: T) Img(T) {
             return Img(T){
                 .v = [_]T{ scalar, imaginary },
             };
         }
 
-        fn mul(self: Img(T), other: Img(T)) Img(T) {
+        pub fn mul(self: Img(T), other: Img(T)) Img(T) {
             // I have no clue if this Vector version is faster than
             // just writing out the multiplcations.  Good practice
             // with Vectors, though.
@@ -31,7 +31,7 @@ pub fn Img(comptime T: type) type {
             };
         }
 
-        fn add(self: Img(T), other: Img(T)) Img(T) {
+        pub fn add(self: Img(T), other: Img(T)) Img(T) {
             return Img(T){ .v = self.v + other.v };
         }
     };
@@ -39,6 +39,13 @@ pub fn Img(comptime T: type) type {
 
 test "imaginary" {
     const T = Img(f32);
-    try expectEqual(T.init(1, 1), T.init(0, 1).add(T.init(1, 0)));
-    try expectEqual(T.init(-5, 10), T.init(1, 2).mul(T.init(3, 4)));
+    try expectEqual(T.init(1, 1), math("a + b", .{
+        .a = T.init(0, 1),
+        .b = T.init(1, 0),
+    }));
+
+    try expectEqual(T.init(-5, 10), math("a * b", .{
+        .a = T.init(1, 2),
+        .b = T.init(3, 4),
+    }));
 }

@@ -44,6 +44,9 @@ Implemented:
   - Addition between matrices of the same size.
   - Multiplication with compatible shaped matricies resulting in a third, possibly differently shapped, matrix.
   - Multiplication with scaler values, which multiplies each value in the matrix by the scaler.
+- Imaginary Numbers:
+  - Define in terms of real and imaginary parts.
+  - Addition and Multiplication with other imaginary numbers.
 
 Feature Wishlist:
 - Types:
