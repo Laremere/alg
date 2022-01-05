@@ -35,3 +35,36 @@ Current limitations:
 - Only a limited number of operations implemented so far.
 - There is no order of operations.  All chained operations must be the same.  Use parethesis to determine order.  Eg, "(a * b) + c".
 - Chained operations are always carried out left to right.  This may be inefficient for some equations, and not standard for others (eg, raising to a power).
+
+All more complex types have a single underlying type, and all operations require the same underlying type between operands.  Eg you can't add a matrix backed by floats with one backed by integers.
+
+Implemented:
+- Matrices:
+  - Define matrix in terms of rows, and columns.
+  - Addition between matrices of the same size.
+  - Multiplication with compatible shaped matricies resulting in a third, possibly differently shapped, matrix.
+  - Multiplication with scaler values, which multiplies each value in the matrix by the scaler.
+
+Feature Wishlist:
+- Types:
+  - Floats
+  - Integers
+  - Comptime float and integers
+  - Vectory / Array
+  - Matrix
+  - Affine Matrix
+  - Geometic Algebra
+  - Maybe custom functions?
+  - Imaginary Numbers
+  - Quaternion
+- Operations
+  - Add
+  - multiply
+  - dot
+  - etc.
+- Built in values?
+  - e
+  - pi
+  - Identity matrix?  Is this useful?
+- Make parse errors actually useful.
+- Pairwise conversion of underlying type.

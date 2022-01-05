@@ -1,30 +1,6 @@
 const std = @import("std");
 const expectEqual = @import("std").testing.expectEqual;
 
-// TODO:
-//
-// Types:
-// - Floats
-// - Integers
-// - Comptime float and integers
-// - Vectory / Array
-// - Matrix
-// - Affine Matrix
-// - Geometic Algebra
-// - Maybe custom functions?
-// - Imaginary Numbers
-// - Quaternion
-//
-// Operations
-// Add, multiply, dot, etc.
-//
-// Built in values?
-// e?
-// pi?
-// Identity matrix?  Is this useful?
-//
-// Make parse errors actually useful.
-
 test "math" {
     // std.debug.print("\n{}\n", .{math("a", .{ .a = @as(i8, 7) })});
     try expectEqual(@as(i8, 5), math("a", .{ .a = @as(i8, 5) }));
