@@ -42,6 +42,23 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             return r;
         }
 
+        pub fn ident() Self {
+            if (rows != columns) {
+                @panic("ident is only valid for square matrices.");
+            }
+            const arr = comptime init: {
+                var arrInit = [_]T{0} ** (columns * rows);
+                var i: usize = 0;
+                while (i < arrInit.len) : (i += columns + 1) {
+                    arrInit[i] = 1;
+                }
+                break :init arrInit;
+            };
+            return Self{
+                .columnMajorValues = arr,
+            };
+        }
+
         pub fn mul(self: Self, other: anytype) Self.mulReturnType(@TypeOf(other)) {
             const Other = @TypeOf(other);
             if (T == Other) {
@@ -216,4 +233,20 @@ test "matrix scale" {
         2, 4,
         6, 8,
     }), d);
+}
+
+test "identity matrix" {
+    const T = Matrix(f32, 5, 5);
+
+    var a = T.lit(.{
+        1, 0, 0, 0, 0,
+        0, 1, 0, 0, 0,
+        0, 0, 1, 0, 0,
+        0, 0, 0, 1, 0,
+        0, 0, 0, 0, 1,
+    });
+
+    var b = T.ident();
+
+    try expectEqual(a, b);
 }
