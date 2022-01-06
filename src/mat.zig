@@ -10,13 +10,13 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
     }
 
     return struct {
-        // Stored in column major order.
-        values: [columns][rows]T,
+        columnMajorValues: [columns * rows]T,
 
         const T = T;
         const rows = rows;
         const columns = columns;
         const Self = @This();
+        const SelfV = Vector(columns * rows, T);
         const isMatrixType = true;
 
         pub fn lit(v: anytype) @This() {
@@ -36,7 +36,7 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             inline while (column < columns) : (column += 1) {
                 comptime var row: usize = 0;
                 inline while (row < rows) : (row += 1) {
-                    r.values[column][row] = @field(v, fieldsInfo[row * columns + column].name);
+                    r.columnMajorValues[column * rows + row] = @field(v, fieldsInfo[row * columns + column].name);
                 }
             }
             return r;
@@ -50,28 +50,27 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             var r: Self.mulReturnType(@TypeOf(other)) = undefined;
 
             var selfRows: [rows]Vector(columns, T) = undefined;
-            // TODO: Maybe putting into a big array and shuffling out values
+            // TODO: Maybe putting into a big vector and shuffling out values
             // would be faster?
 
             {
-                var i: usize = 0;
-                while (i < rows) : (i += 1) {
-                    var row: [columns]T = undefined;
-                    var j: usize = 0;
-                    while (j < columns) : (j += 1) {
-                        row[j] = self.values[j][i];
+                var row: usize = 0;
+                while (row < rows) : (row += 1) {
+                    var rowArr: [columns]T = undefined;
+                    var column: usize = 0;
+                    while (column < columns) : (column += 1) {
+                        rowArr[column] = self.columnMajorValues[column * rows + row];
                     }
-                    selfRows[i] = row;
+                    selfRows[row] = rowArr;
                 }
             }
 
-            var i: usize = 0;
-            while (i < Other.columns) : (i += 1) {
-                // columns == other.rows
-                var column: Vector(Other.rows, T) = other.values[i];
-                var j: usize = 0;
-                while (j < rows) : (j += 1) {
-                    r.values[i][j] = @reduce(.Add, selfRows[j] * column);
+            var column: usize = 0;
+            while (column < Other.columns) : (column += 1) {
+                var columnVec: Vector(Other.rows, T) = other.columnMajorValues[column * Other.rows ..][0..Other.rows].*;
+                var row: usize = 0;
+                while (row < rows) : (row += 1) {
+                    r.columnMajorValues[column * rows + row] = @reduce(.Add, selfRows[row] * columnVec);
                 }
             }
 
@@ -97,33 +96,22 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
         }
 
         pub fn mulSwap(self: Self, scaler: T) Self {
-            var r: Self = undefined;
-            var i: usize = 0;
-            var scalerVec = @splat(rows, scaler);
-            while (i < columns) : (i += 1) {
-                r.values[i] = @as(Vector(rows, T), self.values[i]) * scalerVec;
-            }
-            return r;
+            var scalerVec = @splat(columns * rows, scaler);
+            return Self{
+                .columnMajorValues = @as(SelfV, self.columnMajorValues) * scalerVec,
+            };
         }
 
         pub fn add(self: Self, other: Self) Self {
-            // TODO: Is there a way to do vector addition on the whole contents
-            // while still letting on individual columns work??
-            var r: Self = undefined;
-            var i: usize = 0;
-            while (i < columns) : (i += 1) {
-                r.values[i] = @as(Vector(rows, T), self.values[i]) + @as(Vector(rows, T), other.values[i]);
-            }
-            return r;
+            return Self{
+                .columnMajorValues = @as(SelfV, self.columnMajorValues) + @as(SelfV, other.columnMajorValues),
+            };
         }
 
         pub fn sub(self: Self, other: Self) Self {
-            var r: Self = undefined;
-            var i: usize = 0;
-            while (i < columns) : (i += 1) {
-                r.values[i] = @as(Vector(rows, T), self.values[i]) - @as(Vector(rows, T), other.values[i]);
-            }
-            return r;
+            return Self{
+                .columnMajorValues = @as(SelfV, self.columnMajorValues) - @as(SelfV, other.columnMajorValues),
+            };
         }
     };
 }
@@ -141,10 +129,10 @@ test "matrix literal" {
         2, 3,
         4, 5,
     });
-    try expectEqual(@as(f32, 2), a.values[0][0]);
-    try expectEqual(@as(f32, 4), a.values[0][1]);
-    try expectEqual(@as(f32, 3), a.values[1][0]);
-    try expectEqual(@as(f32, 5), a.values[1][1]);
+    try expectEqual(@as(f32, 2), a.columnMajorValues[0]);
+    try expectEqual(@as(f32, 4), a.columnMajorValues[1]);
+    try expectEqual(@as(f32, 3), a.columnMajorValues[2]);
+    try expectEqual(@as(f32, 5), a.columnMajorValues[3]);
 }
 
 test "matrix multiplcation" {
