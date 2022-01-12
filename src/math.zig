@@ -492,7 +492,7 @@ const Tokenizer = struct {
                     ' ' => {
                         r.start = self.index + 1;
                     },
-                    'a'...'z', 'A'...'A', '_' => {
+                    'a'...'z', 'A'...'Z', '_' => {
                         state = .identifier;
                     },
                     '+' => {
@@ -526,7 +526,7 @@ const Tokenizer = struct {
                     },
                 },
                 .identifier => switch (c) {
-                    'a'...'z', 'A'...'A', '_' => {},
+                    'a'...'z', 'A'...'Z', '_' => {},
                     else => {
                         r.tag = .identifier;
                         break :outer;
