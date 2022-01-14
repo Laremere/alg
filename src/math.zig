@@ -158,7 +158,7 @@ const Parser = struct {
                 return Element{ .blockTerm = BlockTerm.rParen };
             },
 
-            .plus, .minus, .asterisk => {
+            .plus, .minus, .asterisk, .slash => {
                 return Element{ .operand = token.tag };
             },
 
@@ -252,6 +252,7 @@ fn makeBinaryOp(comptime alloc: *StupidAlloc, lhs: *Ast, opToken: Token.Tag, rhs
         .plus => "add",
         .minus => "sub",
         .asterisk => "mul",
+        .slash => "div",
         else => @compileError("Invalid binary operator for method call"),
     };
 
@@ -452,6 +453,7 @@ const Token = struct {
         plus,
         minus,
         asterisk,
+        slash,
         lParen,
         rParen,
     };
@@ -507,6 +509,11 @@ const Tokenizer = struct {
                     },
                     '*' => {
                         r.tag = .asterisk;
+                        self.index += 1;
+                        break :outer;
+                    },
+                    '/' => {
+                        r.tag = .slash;
                         self.index += 1;
                         break :outer;
                     },
