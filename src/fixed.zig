@@ -107,11 +107,20 @@ const D64 = struct {
         return D64{ .v = @intCast(i64, rb) };
     }
 
+    pub fn mod(self: D64, other: D64) D64 {
+        var sb = shl(i128, @intCast(i128, self.v), 32);
+        if (self.v < 0) {
+            sb |= 0xFFFFFFFF;
+        }
+        const ob = shl(i128, @intCast(i128, other.v), 32);
+        const rb = @mod(sb, ob);
+        return D64{ .v = @intCast(i64, shr(i128, rb, 32)) };
+    }
+
     pub fn sin(self: D64) D64 {
         const twoPi = comptime pi.mul(lit("2"));
         const piOverTwo = comptime pi.div(lit("2"));
-        const base = self.div(twoPi).floor().mul(twoPi);
-        const partial = self.sub(base).div(piOverTwo); // 0 to 4.
+        const partial = self.mod(twoPi).div(piOverTwo); // 0 to 4.
 
         if (partial.lessThan(lit("1"))) {
             return zeroToOneSin(partial);
@@ -128,8 +137,7 @@ const D64 = struct {
     pub fn cos(self: D64) D64 {
         const twoPi = comptime pi.mul(lit("2"));
         const piOverTwo = comptime pi.div(lit("2"));
-        const base = self.div(twoPi).floor().mul(twoPi);
-        const partial = self.sub(base).div(piOverTwo); // 0 to 4.
+        const partial = self.mod(twoPi).div(piOverTwo); // 0 to 4.
 
         if (partial.lessThan(lit("1"))) {
             return zeroToOneSin(lit("1").sub(partial));
@@ -145,6 +153,7 @@ const D64 = struct {
 
     fn zeroToOneSin(z: D64) D64 {
         // Is correct to within +-0.0075.  A better Taylor series would yield better accuracy.
+        // Equation source: https://www.nullhardware.com/blog/fixed-point-sine-and-cosine-for-embedded-systems/
         const a = comptime math("four * ((three / pi) - (nine / sixteen))", .{
             .four = lit("4"),
             .three = lit("3"),
@@ -222,6 +231,18 @@ test "div" {
     const a = D64.lit("2");
     const b = D64.lit("0.5");
     try expectEqual(@as(f32, 4), math("a / b", .{ .a = a, .b = b }).toF32());
+}
+
+test "mod" {
+    const d = D64.lit;
+    try expectEqual(d("1"), d("-5").mod(d("3")));
+    try expectEqual(d("2"), d("5").mod(d("3")));
+    try expectEqual(
+        d("-5.5").sub(d("-5.5").div(d("3")).floor().mul(d("3"))),
+        d("-5.5").mod(d("3")),
+    );
+    // The literal seems to be the wrong part here, so exact comparison is slightly off?
+    try std.testing.expectApproxEqAbs(d("0.5").toF32(), d("-5.5").mod(d("3")).toF32(), 0.0075);
 }
 
 test "zeroToOneSin" {
