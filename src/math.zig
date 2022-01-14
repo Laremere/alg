@@ -32,7 +32,7 @@ const StupidAlloc = struct {
 };
 
 pub fn math(comptime eq: [:0]const u8, args: anytype) ReturnType(eq, @TypeOf(args)) {
-    @setEvalBranchQuota(10000);
+    comptime @setEvalBranchQuota(100000);
     comptime var parser = comptime Parser.init(eq, @TypeOf(args));
     comptime var root = parser.parse();
     return root.eval(args);
