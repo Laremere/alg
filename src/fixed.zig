@@ -5,12 +5,12 @@ const shl = std.math.shl;
 
 const expectEqual = @import("std").testing.expectEqual;
 
-const D64 = struct {
+pub const D64 = struct {
     v: i64,
     const offset = 32;
     const lowBits = 0xFFFFFFFF;
 
-    const pi = lit("3.1415926535897932384626433");
+    pub const pi = lit("3.1415926535897932384626433");
 
     pub fn lit(comptime str: [:0]const u8) D64 {
         if (str.len == 0) {
