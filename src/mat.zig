@@ -59,12 +59,16 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             };
         }
 
-        pub fn mul(self: Self, other: anytype) Self.mulReturnType(@TypeOf(other)) {
-            const Other = @TypeOf(other);
-            if (T == Other) {
-                return self.mulSwap(other);
+        pub fn mul(lhs: anytype, rhs: anytype) Self.mulReturnType(@TypeOf(lhs), @TypeOf(rhs)) {
+            const Lhs = @TypeOf(lhs);
+            const Rhs = @TypeOf(rhs);
+            if (Lhs == Self and Rhs == T) {
+                return lhs.mulScale(rhs);
             }
-            var r: Self.mulReturnType(@TypeOf(other)) = undefined;
+            if (Lhs == T and Rhs == Self) {
+                return rhs.mulScale(lhs);
+            }
+            var r: Self.mulReturnType(Lhs, Rhs) = undefined;
 
             var selfRows: [rows]Vector(columns, T) = undefined;
             // TODO: Maybe putting into a big vector and shuffling out values
@@ -76,15 +80,15 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
                     var rowArr: [columns]T = undefined;
                     var column: usize = 0;
                     while (column < columns) : (column += 1) {
-                        rowArr[column] = self.columnMajorValues[column * rows + row];
+                        rowArr[column] = lhs.columnMajorValues[column * rows + row];
                     }
                     selfRows[row] = rowArr;
                 }
             }
 
             var column: usize = 0;
-            while (column < Other.columns) : (column += 1) {
-                var columnVec: Vector(Other.rows, T) = other.columnMajorValues[column * Other.rows ..][0..Other.rows].*;
+            while (column < Rhs.columns) : (column += 1) {
+                var columnVec: Vector(Rhs.rows, T) = rhs.columnMajorValues[column * Rhs.rows ..][0..Rhs.rows].*;
                 var row: usize = 0;
                 while (row < rows) : (row += 1) {
                     r.columnMajorValues[column * rows + row] = @reduce(.Add, selfRows[row] * columnVec);
@@ -94,25 +98,28 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
             return r;
         }
 
-        pub fn mulReturnType(comptime Other: type) type {
-            if (T == Other) {
+        pub fn mulReturnType(comptime LhsMaybe: type, comptime RhsMaybe: type) type {
+            const Lhs = DepointerType(LhsMaybe);
+            const Rhs = DepointerType(RhsMaybe);
+
+            if ((Lhs == Self and Rhs == T) or (Lhs == T and Rhs == Self)) {
                 return Self;
             }
-            if (!@hasDecl(Other, "isMatrixType")) {
+            if (!@hasDecl(Rhs, "isMatrixType") or Lhs != Self) {
                 return void;
             }
-            if (T != Other.T) {
+            if (T != Rhs.T) {
                 return void;
                 // @compileError("Matrix multiplcation value types must match");
             }
-            if (columns != Other.rows) {
+            if (columns != Rhs.rows) {
                 return void;
                 // @compileError("Matrix multiplcation sizes incompatible.");
             }
-            return Matrix(T, rows, Other.columns);
+            return Matrix(T, rows, Rhs.columns);
         }
 
-        pub fn mulSwap(self: Self, scaler: T) Self {
+        fn mulScale(self: Self, scaler: T) Self {
             var scalerVec = @splat(columns * rows, scaler);
             return Self{
                 .columnMajorValues = @as(SelfV, self.columnMajorValues) * scalerVec,
@@ -133,10 +140,23 @@ pub fn Matrix(comptime T: type, rows: comptime_int, columns: comptime_int) type 
     };
 }
 
+fn DepointerType(comptime T: type) type {
+    switch (@typeInfo(T)) {
+        .Pointer => |ptr| {
+            switch (@typeInfo(ptr.child)) {
+                .Struct, .Enum, .Union => return ptr.child,
+                else => {},
+            }
+        },
+        else => {},
+    }
+    return T;
+}
+
 test "matrix multiplcation type" {
     const A = Matrix(f32, 5, 3);
     const B = Matrix(f32, 3, 4);
-    const C = comptime A.mulReturnType(B);
+    const C = comptime A.mulReturnType(A, B);
     try expectEqual(5, C.rows);
     try expectEqual(4, C.columns);
 }
@@ -173,6 +193,11 @@ test "matrix multiplcation" {
         94,  103,
         184, 202,
     }), c);
+
+    try expectEqual(Matrix(f32, 2, 2).lit(.{
+        94,  103,
+        184, 202,
+    }), a.mul(b));
 }
 
 test "matrix addition" {

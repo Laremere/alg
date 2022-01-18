@@ -256,8 +256,9 @@ fn makeBinaryOp(comptime alloc: *StupidAlloc, lhs: *Ast, opToken: Token.Tag, rhs
         else => @compileError("Invalid binary operator for method call"),
     };
 
-    if (CheckTypeForBinaryMethod(opName, Lhs, Rhs)) |T| {
+    if (CheckTypeForBinaryMethod(opName, Lhs, Lhs, Rhs)) |T| {
         r.* = Ast{ .fnBinaryOp = FnBinaryOp{
+            .CallType = Lhs,
             .lhs = lhs,
             .op = opName,
             .rhs = rhs,
@@ -266,11 +267,11 @@ fn makeBinaryOp(comptime alloc: *StupidAlloc, lhs: *Ast, opToken: Token.Tag, rhs
         return r;
     }
 
-    const altOpName = opName ++ "Swap";
-    if (CheckTypeForBinaryMethod(altOpName, Rhs, Lhs)) |T| {
+    if (CheckTypeForBinaryMethod(opName, Rhs, Lhs, Rhs)) |T| {
         r.* = Ast{ .fnBinaryOp = FnBinaryOp{
+            .CallType = Rhs,
             .lhs = rhs,
-            .op = altOpName,
+            .op = opName,
             .rhs = lhs,
             .ReturnType = T,
         } };
@@ -280,15 +281,15 @@ fn makeBinaryOp(comptime alloc: *StupidAlloc, lhs: *Ast, opToken: Token.Tag, rhs
 }
 
 // If A has a method named opName, which takes B, return the return type.  Otherwise null.
-fn CheckTypeForBinaryMethod(comptime opName: [:0]const u8, comptime A: type, comptime B: type) ?type {
-    if (isBuiltinScalar(A)) {
+fn CheckTypeForBinaryMethod(comptime opName: [:0]const u8, comptime C: type, comptime A: type, comptime B: type) ?type {
+    if (isBuiltinScalar(C)) {
         return null;
     }
-    if (!@hasDecl(A, opName)) {
+    if (!@hasDecl(C, opName)) {
         return null;
     }
 
-    const declInfo = std.meta.declarationInfo(A, opName);
+    const declInfo = std.meta.declarationInfo(C, opName);
     const FnType = switch (declInfo.data) {
         .Type => return null,
         .Var => return null,
@@ -308,8 +309,8 @@ fn CheckTypeForBinaryMethod(comptime opName: [:0]const u8, comptime A: type, com
     }
 
     const fnName = opName ++ "ReturnType";
-    if (@hasDecl(A, fnName)) {
-        const R = @field(A, fnName)(B);
+    if (@hasDecl(C, fnName)) {
+        const R = @field(C, fnName)(A, B);
         if (R != void) {
             return R;
         }
@@ -342,6 +343,7 @@ const ScalerBinaryOp = struct {
 };
 
 const FnBinaryOp = struct {
+    CallType: type,
     lhs: *Ast,
     op: [:0]const u8,
     rhs: *Ast,
@@ -351,7 +353,7 @@ const FnBinaryOp = struct {
         const lhs = self.lhs.eval(args);
         const rhs = self.rhs.eval(args);
 
-        return @field(lhs, self.op)(rhs);
+        return @field(self.CallType, self.op)(lhs, rhs);
     }
 };
 
