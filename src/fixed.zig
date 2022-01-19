@@ -195,6 +195,56 @@ pub const D64 = struct {
     pub fn lessThan(self: D64, other: D64) bool {
         return self.v < other.v;
     }
+
+    pub fn sqrt(self: D64) D64 {
+        var v: i128 = @intCast(i128, self.v);
+        if (v < 0) {
+            v *= -1;
+        }
+
+        var r: i128 = 0;
+        var i: i128 = 1 << 63;
+
+        while (true) {
+            const testR = r | i;
+            if (shr(i128, testR * testR, 32) <= v) {
+                r = testR;
+            }
+            if (i == 1) {
+                break;
+            }
+
+            i >>= 1;
+        }
+
+        return D64{ .v = @intCast(i64, r) };
+    }
+
+    //     const rb = @intCast(i128, self.v) * @intCast(i128, other.v);
+
+    //     return D64{ .v = @intCast(i64, shr(i128, rb, 32)) };
+
+    //     var v = self.v;
+    //     if (v < 0) {
+    //         v *= -1;
+    //         if (v < 0) {
+    //             v += 1;
+    //             v *= -1;
+    //         }
+    //     }
+    //     var i: i64 = 1 << (32 + 15);
+    //     var r: D64 = D64{ .v = 0 };
+    //     while (true) {
+    //         const testR = D64{ .v = r.v | i };
+    //         if (testR.mul(testR).v <= v) {
+    //             r = testR;
+    //         }
+    //         if (i == 1) {
+    //             return r;
+    //         }
+    //         i >>= 1;
+    //     }
+    // }
 };
 
 test "lit" {
@@ -279,4 +329,10 @@ test "sin and cos" {
 test "floor" {
     try expectEqual(D64.lit("1"), D64.lit("1.5").floor());
     try expectEqual(D64.lit("-1"), D64.lit("-0.5").floor());
+}
+
+test "sqrt" {
+    try expectEqual(D64.lit("2"), D64.lit("4").sqrt());
+    try expectEqual(D64.lit("2"), D64.lit("-4").sqrt()); // Not great, but better than nothing...
+    try expectEqual(D64.lit("46340.9500011").toF32(), D64.lit("2147483647").sqrt().toF32());
 }
